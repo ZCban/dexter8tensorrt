@@ -74,20 +74,6 @@ def count_fps(start_time, fps_counter):
 
     return start_time, fps_counter
 
-def det_postprocess(data: Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor], confidence_threshold: float = 0.45) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    assert len(data) == 4
-    num_dets, bboxes, scores, labels = (i[0] for i in data)
-    #nums = num_dets.item()
-    
-    # Filtra le rilevazioni in base alla soglia di confidenza
-    selected_indices = scores >= confidence_threshold
-    bboxes = bboxes[selected_indices]
-    #scores = scores[selected_indices]
-    #labels = labels[selected_indices]
-    
-    return bboxes#, scores, labels
-
-
 def det_postprocess6(data: Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor], 
                      confidence_threshold: float = 0.42, 
                      class_id: int = 0,  
@@ -97,23 +83,27 @@ def det_postprocess6(data: Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch
     # Applica i filtri di soglia di confidenza e ID della classe
     selected = (scores >= confidence_threshold) & (labels == class_id)
     
-    # Calcola l'area delle bounding boxes e applica i filtri di dimensione
-    #box_areas = (bboxes[:, 2] - bboxes[:, 0]) * (bboxes[:, 3] - bboxes[:, 1])
-    #selected &= (box_areas >= min_size**2) & (box_areas <= max_size**2)
-    
     # Applica la selezione
     scores_selected = scores[selected]
     #labels_selected = labels[selected]
     bboxes_selected = bboxes[selected]
     
     # Utilizza torch.topk per trovare i punteggi più alti e i loro indici
-    top_scores, top_indices = scores_selected.topk(min(max_results, scores_selected.size(0)), largest=True)
-    
-    # Seleziona le bounding boxes e le etichette corrispondenti agli indici
-    top_bboxes = bboxes_selected[top_indices]
+    #top_scores, top_indices = scores_selected.topk(min(max_results, scores_selected.size(0)), largest=True)
+    #top_bboxes = bboxes_selected[top_indices]
     #top_labels = labels_selected[top_indices]
+    #return bboxes_selected
+    # Avoid moving to CPU prematurely; keep computations on GPU
+    x1, y1, x2, y2 = bboxes_selected[:, 0], bboxes_selected[:, 1], bboxes_selected[:, 2], bboxes_selected[:, 3]
+    cx = (x1 + x2) / 2
+    cy = (y1 + y2) / 2
+    w = x2 - x1
+    h = y2 - y1
+    new_boxes = torch.stack([cx, cy, w, h], dim=1)
+        
+    return new_boxes.cpu().numpy()
     
-    return top_bboxes
+
 
 
 
@@ -134,25 +124,16 @@ def box_convert_cupy(boxes, from_mode, to_mode):
     raise ValueError(f"Conversion from {from_mode} to {to_mode} not supported")
 
 
-
 def box_convert_numpy(boxes, from_mode, to_mode):
-    if from_mode == to_mode:
-        return boxes
-
-    if from_mode == 'xyxy' and to_mode == 'cxcywh':
-        # Move the tensor to CPU
-        boxes_cpu = boxes.cpu().numpy()
-
-        x1, y1, x2, y2 = np.split(boxes_cpu, 4, axis=-1)
-        cx = (x1 + x2) / 2
-        cy = (y1 + y2) / 2
-        w = x2 - x1
-        h = y2 - y1
-        return np.concatenate([cx, cy, w, h], axis=-1)
-
-    # Add other conversion modes as needed
-
-    raise ValueError(f"Conversion from {from_mode} to {to_mode} not supported")
+    # Avoid moving to CPU prematurely; keep computations on GPU
+    x1, y1, x2, y2 = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
+    cx = (x1 + x2) / 2
+    cy = (y1 + y2) / 2
+    w = x2 - x1
+    h = y2 - y1
+    new_boxes = torch.stack([cx, cy, w, h], dim=1)
+        
+    return new_boxes.cpu().numpy() 
 
 def box_convert_torch(boxes, from_mode, to_mode):
     if from_mode == to_mode:
@@ -169,6 +150,8 @@ def box_convert_torch(boxes, from_mode, to_mode):
     # Add other conversion modes as needed
 
     raise ValueError(f"Conversion from {from_mode} to {to_mode} not supported")
+
+
 
 
 def box_convert(boxes, from_mode, to_mode):
